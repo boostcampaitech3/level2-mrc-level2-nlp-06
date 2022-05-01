@@ -1,0 +1,13 @@
+## Python ##
+__pycache__/
+
+## Jupyter notebook ##
+.ipynb_checkpoints
+
+## etc
+assets
+install
+
+## model
+models/
+outputs/
