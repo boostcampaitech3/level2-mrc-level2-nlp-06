@@ -35,9 +35,11 @@ def main():
     # [참고] argument를 manual하게 수정하고 싶은 경우에 아래와 같은 방식을 사용할 수 있습니다
     # training_args.per_device_train_batch_size = 4
     # print(training_args.per_device_train_batch_size)
+    training_args.save_total_limit = 5
 
     print(f"model is from {model_args.model_name_or_path}")
     print(f"data is from {data_args.dataset_name}")
+    print(f"Training Arguments is {training_args}")
 
     # logging 설정
     logging.basicConfig(
@@ -304,7 +306,12 @@ def run_mrc(
     metric = load_metric("squad")
 
     def compute_metrics(p: EvalPrediction):
-        return metric.compute(predictions=p.predictions, references=p.label_ids)
+        result = metric.compute(predictions=p.predictions, references=p.label_ids)
+        print('==compute_metrics=============')
+        print(result)
+        wandb.log({"f1": result['f1'], "exact_match": result['exact_match']})
+
+        return result
 
     # training_args.report_to = "wandb"
     # Trainer 초기화
@@ -337,8 +344,10 @@ def run_mrc(
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
+
+        print("===Train============================")
+        print(metrics)
         
-        wandb.log({"train": metrics})
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
 
@@ -363,7 +372,10 @@ def run_mrc(
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-        wandb.log({"eval": metrics})
+        print("===Evaluation============================")
+        print(metrics)
+
+        wandb.log({"Eval_f1": metrics['f1'], "Eval_exact_match": metrics['exact_match']})
 
 
 if __name__ == "__main__":
