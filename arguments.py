@@ -90,3 +90,21 @@ class DataTrainingArguments:
     use_faiss: bool = field(
         default=False, metadata={"help": "Whether to build with faiss"}
     )
+
+
+@dataclass
+class UserArguments:
+    """
+    WandB 관련 argument 입니다.
+    """
+    entity: str = field(
+        default="user_name",
+        metadata={"help": "WandB 상에서 자신의 닉네임 (entity)를 입력해주세요."
+        "기본값을 반드시 수정해야 합니다."
+        }
+    )
+
+    name: str = field(
+        default="new_case",
+        metadata={"help": "WandB 상 표시될 실험 케이스의 이름입니다. 규칙에 따라 작성해 주세요."}
+    )
