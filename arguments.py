@@ -98,9 +98,8 @@ class UserArguments:
     WandB 관련 argument 입니다.
     """
     entity: str = field(
-        default="user_name",
-        metadata={"help": "WandB 상에서 자신의 닉네임 (entity)를 입력해주세요."
-        "기본값을 반드시 수정해야 합니다."
+        default="boostcamp_nlp06",
+        metadata={"help": "WandB의 entity name을 입력해주세요."
         }
     )
 
