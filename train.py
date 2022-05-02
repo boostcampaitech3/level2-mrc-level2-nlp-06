@@ -52,6 +52,8 @@ def main():
     # WandB 설정
     wandb.login()
     wandb.init(project='MRC', entity=user_args.entity, name=user_args.name)
+    #training_args.report_to = "wandb"
+
 
     # 모델을 초기화하기 전에 난수를 고정합니다.
     set_seed(training_args.seed)
@@ -304,6 +306,7 @@ def run_mrc(
     def compute_metrics(p: EvalPrediction):
         return metric.compute(predictions=p.predictions, references=p.label_ids)
 
+    # training_args.report_to = "wandb"
     # Trainer 초기화
     trainer = QuestionAnsweringTrainer(
         model=model,
@@ -315,7 +318,6 @@ def run_mrc(
         data_collator=data_collator,
         post_process_function=post_processing_function,
         compute_metrics=compute_metrics,
-        report_to="wandb"
     )
 
     # Training
@@ -335,6 +337,8 @@ def run_mrc(
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)
         trainer.save_state()
+        
+        wandb.log({"train": metrics})
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")
 
@@ -358,6 +362,8 @@ def run_mrc(
 
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
+
+        wandb.log({"eval": metrics})
 
 
 if __name__ == "__main__":
