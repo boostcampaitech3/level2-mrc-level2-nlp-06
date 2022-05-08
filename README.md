@@ -108,6 +108,11 @@ retrieval 과 mrc 모델의 학습이 완료되면 `inference.py` 를 이용해 
 python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/test_dataset/ --model_name_or_path ./models/train_dataset/ --do_predict
 ```
 
+```bash
+# 평가(--do_eval)을 진행하고 싶을 때는 train dataset으로...
+python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/train_dataset --model_name_or_path ./models/train_dataset --do_eval
+```
+
 ### How to submit
 
 `inference.py` 파일을 위 예시처럼 `--do_predict` 으로 실행하면 `--output_dir` 위치에 `predictions.json` 이라는 파일이 생성됩니다. 해당 파일을 제출해주시면 됩니다.
