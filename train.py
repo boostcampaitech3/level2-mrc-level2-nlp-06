@@ -19,6 +19,8 @@ from transformers import (
 )
 from utils_qa import check_no_error, postprocess_qa_predictions
 
+from retrieval import SparseRetrieval
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +95,15 @@ def main():
         type(model),
     )
 
+    # train & save sparse embedding retriever if true
+    if data_args.train_retrieval:
+        retriever = SparseRetrieval(
+            tokenize_fn=tokenizer.tokenize,
+            data_path="../data",
+            context_path="wikipedia_documents.json"
+        )
+        retriever.get_sparse_BM25()
+
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
@@ -132,11 +143,11 @@ def run_mrc(
         # truncation과 padding(length가 짧을때만)을 통해 toknization을 진행하며, stride를 이용하여 overflow를 유지합니다.
         # 각 example들은 이전의 context와 조금씩 겹치게됩니다.
         tokenized_examples = tokenizer(
-            examples[question_column_name if pad_on_right else context_column_name],
+            examples[question_column_name if pad_on_right else context_column_name], # question과 context의 순서를 잡아주는 역할
             examples[context_column_name if pad_on_right else question_column_name],
             truncation="only_second" if pad_on_right else "only_first",
-            max_length=max_seq_length,
-            stride=data_args.doc_stride,
+            max_length=max_seq_length, # context + answer 길이
+            stride=data_args.doc_stride, # 
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
             return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.

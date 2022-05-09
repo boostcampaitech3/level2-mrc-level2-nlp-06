@@ -110,16 +110,19 @@ def run_sparse_retrieval(
     retriever = SparseRetrieval(
         tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
     )
-    retriever.get_sparse_embedding()
+    ## retriever.get_sparse_embedding()
+    retriever.get_sparse_BM25()
+    df = retriever.retrieve_BM25(datasets['validation'], topk=data_args.top_k_retrieval) ##
 
+    # temp
     if data_args.use_faiss:
         retriever.build_faiss(num_clusters=data_args.num_clusters)
         df = retriever.retrieve_faiss(
             datasets["validation"], topk=data_args.top_k_retrieval
         )
     else:
-        df = retriever.retrieve(datasets["validation"], topk=data_args.top_k_retrieval)
-
+        df = retriever.retrieve_BM25(datasets["validation"], topk=data_args.top_k_retrieval)
+    
     # test data 에 대해선 정답이 없으므로 id question context 로만 데이터셋이 구성됩니다.
     if training_args.do_predict:
         f = Features(
@@ -268,6 +271,8 @@ def run_mrc(
     metric = load_metric("squad")
 
     def compute_metrics(p: EvalPrediction) -> Dict:
+        print("[Error check]")
+        print(p)
         return metric.compute(predictions=p.predictions, references=p.label_ids)
 
     print("init trainer...")
