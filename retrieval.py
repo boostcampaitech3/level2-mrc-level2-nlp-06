@@ -12,6 +12,7 @@ from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from tqdm.auto import tqdm
 
+from rank_bm25 import BM25Plus
 
 @contextmanager
 def timer(name):
@@ -67,6 +68,10 @@ class SparseRetrieval:
         self.p_embedding = None  # get_sparse_embedding()로 생성합니다
         self.indexer = None  # build_faiss()로 생성합니다.
 
+        # BM25
+        self.BM25 = None
+        self.tokenizer = tokenize_fn
+
     def get_sparse_embedding(self) -> NoReturn:
 
         """
@@ -97,6 +102,35 @@ class SparseRetrieval:
             with open(tfidfv_path, "wb") as file:
                 pickle.dump(self.tfidfv, file)
             print("Embedding pickle saved.")
+
+
+    ## BM25
+    def get_sparse_BM25(self) -> NoReturn:
+        """
+        Summary:
+            Passage Embedding을 만들고
+            TFIDF와 Embedding을 pickle로 저장합니다.
+            만약 미리 저장된 파일이 있으면 저장된 pickle을 불러옵니다.
+        """
+
+        # Pickle을 저장합니다.
+        pickle_name = f"BM25_embedding.bin"
+        #tfidfv_name = f"tfidv.bin"
+        bm_emd_path = os.path.join(self.data_path, pickle_name)
+        #tfidfv_path = os.path.join(self.data_path, tfidfv_name)
+
+        if os.path.isfile(bm_emd_path):
+            with open(bm_emd_path, "rb") as file:
+                self.BM25 = pickle.load(file)
+            print("BM25 Embedding pickle load.")
+        else:
+            print("Build passage embedding")
+            # = self.tfidfv.fit_transform(self.contexts)
+            tokenized_contexts = [self.tokenizer(i) for i in self.contexts]
+            self.BM25 = BM25Plus(tokenized_contexts)
+            with open(bm_emd_path, "wb") as file:
+                pickle.dump(self.BM25, file)
+            print("BM25 Embedding pickle saved.")
 
     def build_faiss(self, num_clusters=64) -> NoReturn:
 
@@ -201,6 +235,55 @@ class SparseRetrieval:
             cqas = pd.DataFrame(total)
             return cqas
 
+    ## BM25
+    def retrieve_BM25(
+        self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
+    ) -> Union[Tuple[List, List], pd.DataFrame]:
+   
+        assert self.BM25 is not None, "get_sparse_BM25() 메소드를 먼저 수행해줘야합니다."
+
+        if isinstance(query_or_dataset, str):
+            doc_scores, doc_indices = self.get_relevant_doc_BM25(query_or_dataset, k=topk) ##
+            print("[Search query]\n", query_or_dataset, "\n")
+
+            for i in range(topk):
+                print(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
+                print(self.contexts[doc_indices[i]])
+
+            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
+
+        elif isinstance(query_or_dataset, Dataset):
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                doc_scores, doc_indices = self.get_relevant_doc_bulk_BM25(
+                    query_or_dataset['question'], k=topk
+                    ) ##
+            for idx, example in enumerate(
+                tqdm(query_or_dataset, desc="BM25 retrieval: ")
+            ):
+                tmp = {
+                    # Query와 해당 id를 반환합니다.
+                    "question": example["question"],
+                    "id": example["id"],
+                    # Retrieve한 Passage의 id, context를 반환합니다.
+                    "context_id": doc_indices[idx],
+                    "context": " ".join(
+                        [self.contexts[pid] for pid in doc_indices[idx]]
+                    ),
+                }
+                if "context" in example.keys() and "answers" in example.keys():
+                    # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                    tmp["original_context"] = example["context"]
+                    tmp["answers"] = example["answers"]
+                total.append(tmp)
+                
+            cqas = pd.DataFrame(total)
+            return cqas
+
+
+
+        
     def get_relevant_doc(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
         """
@@ -228,6 +311,33 @@ class SparseRetrieval:
         doc_score = result.squeeze()[sorted_result].tolist()[:k]
         doc_indices = sorted_result.tolist()[:k]
         return doc_score, doc_indices
+
+    ## BM25
+    def get_relevant_doc_BM25(self, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
+        """
+        Arguments:
+            query (str):
+                하나의 Query를 받습니다.
+            k (Optional[int]): 1
+                상위 몇 개의 Passage를 반환할지 정합니다.
+        Note:
+            vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
+        """
+
+        # query ~ passage score
+        ''' https://github.com/dorianbrown/rank_bm25
+        query = "windy London"
+        corpus = ["Hello there good man!", "It is quite windy in London", "How is the weather today?"]
+        tokenized_corpus = [doc.split(" ") for doc in corpus]
+        bm25 = BM25Okapi(tokenized_corpus)
+        '''
+        tokenized_query = self.tokenizer(query) 
+
+        doc_scores = self.BM25.get_scores(tokenized_query)
+        doc_indices = np.argsort(-doc_scores)
+        #### print(bm25.get_top_n(tokenized_query, corpus, n=1))
+
+        return doc_scores[doc_indices[:k]], doc_indices[:k]
 
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
@@ -258,6 +368,31 @@ class SparseRetrieval:
             doc_scores.append(result[i, :][sorted_result].tolist()[:k])
             doc_indices.append(sorted_result.tolist()[:k])
         return doc_scores, doc_indices
+
+    # BM25
+    def get_relevant_doc_bulk_BM25(
+        self, queries: List, k: Optional[int] = 1
+    ) -> Tuple[List, List]:
+
+        tokenized_queries= [self.tokenizer(i) for i in queries]
+        assert (
+            np.sum(tokenized_queries) != 0
+        ), "오류가 발생했습니다. 이 오류는 보통 query에 vectorizer의 vocab에 없는 단어만 존재하는 경우 발생합니다."
+        
+        # result = tokenized_queries * self.bm25_embedding.T
+        doc_scores = []
+        doc_indices = []
+        for i in tokenized_queries:
+            scores = self.BM25.get_scores(i)        
+            
+            # sorted_result = np.argsort(tokenized_queries[i, :])[::-1]
+            sorted_scores = np.sort(scores)[::-1]
+            sorted_indices = np.argsort(scores)[::-1]
+            
+            doc_scores.append(sorted_scores[:k])
+            doc_indices.append(sorted_indices[:k])
+        return doc_scores, doc_indices
+
 
     def retrieve_faiss(
         self, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
