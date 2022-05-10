@@ -34,14 +34,9 @@ class DeleteStopword:
         # passage에서 불필요한 심볼 '\n'을 제거합니다.
         passage = passage.replace('\\n', '')
         
-        #word_tokens = self.okt.morphs(passage)
         word_tokens = self.tokenizer.encode(passage)
-        print(f'[raw text]: {passage}')
-        print(f'[tokens]: {word_tokens}')
-        
         result = [word for word in word_tokens if not word in self.stopwords]
 
-        print(f'[result]: {self.tokenizer.decode(result)}')
         return self.tokenizer.decode(result[1:-1])
 
     def konlpy_okt(self, passage:str) -> str:
@@ -53,24 +48,16 @@ class DeleteStopword:
         okted_passage = self.okt.pos(passage)
 
         # 부사와 형용사 추출
-        #ad_words = []
         for word, pos in okted_passage:
             if pos == 'Adverb' or pos == 'Adjective':
-                #ad_words.append(word)
                 self.ad_stopwords.append(tokenizer.encode(word)[1])
-        #print(ad_words)
-
-        print(self.ad_stopwords)
 
         # 부사 및 형용사 제거
-        #word_tokens = self.okt.morphs(passage)
         word_tokens = self.tokenizer.encode(passage)
-        print(f'[raw text]: {passage}')
-        print(f'[tokens]: {word_tokens}')
+        #print(f'[raw text]: {passage}')
+        #print(f'[tokens]: {word_tokens}')
         
         result = [word for word in word_tokens if not word in self.ad_stopwords]
-
-        print(f'[result]: {self.tokenizer.decode(result)}')
         return self.tokenizer.decode(result[1:-1])
 
     def find_answer_index(self, passage:str, answer:str) -> int:
@@ -103,12 +90,27 @@ ds = DeleteStopword(tokenizer=tokenizer)
 from datasets import load_from_disk
 dataset = load_from_disk("../data/train_dataset/")
 
-context = dataset['train'][0]['context']
-answer = dataset['train'][0]['answers']['text'][0] # answer가 2개 이상인 경우는 없는듯
+#context = dataset['train'][0]['context']
+#answer = dataset['train'][0]['answers']['text'][0] # answer가 2개 이상인 경우는 없는듯
 
 #ds.remove_stopwords(context)
 
-r = ds.konlpy_okt(context)
-print(r)
+#r = ds.konlpy_okt(context)
+#print(r)
+#ds.find_answer_index(context, answer)
 
-ds.find_answer_index(context, answer)
+for data in dataset['train']:
+    #print(type(data)) 'dict'
+    context = data['context']
+    answer = data['answers']['text'][0]
+    
+    new_document_id = data['document_id'] + 1 # 어떤 수를 더해야 중복되지 않을까?
+    new_id = data['id'] + "-aug"
+
+    new_context = ds.konlpy_okt(context)
+    new_answer_start = ds.find_answer_index(new_context, answer)
+
+    print(new_context)
+    print(new_answer_start)
+
+    break
