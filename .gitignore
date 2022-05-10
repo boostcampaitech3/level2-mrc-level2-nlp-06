@@ -11,6 +11,7 @@ install
 ## model
 models/
 outputs/
+runs/
 
 ## wandb
 wandb/
