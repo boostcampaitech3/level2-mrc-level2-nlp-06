@@ -107,6 +107,8 @@ retrieval 과 mrc 모델의 학습이 완료되면 `inference.py` 를 이용해 
 
 * 학습한 모델이 train_dataset 대해서 ODQA 성능이 어떻게 나오는지 알고 싶다면 평가(`--do_eval`)를 진행하면 됩니다.
 
+* inference 결과물 json 파일에 prefix를 붙일 수 있습니다! (`--name`)에 원하는 명칭을 적으시면 predictions_{name}.json 형태로 저장됩니다. 추후 ensemble을 위해 잘 보관해주세요!
+
 ```bash
 # ODQA 실행 (test_dataset 사용)
 # wandb 가 로그인 되어있다면 자동으로 결과가 wandb 에 저장됩니다. 아니면 단순히 출력됩니다
@@ -115,7 +117,7 @@ python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/
 
 ```bash
 # 평가(--do_eval)을 진행하고 싶을 때는 train dataset으로...
-python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/train_dataset --model_name_or_path ./models/train_dataset --do_eval --overwrite_output_dir
+python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/train_dataset --model_name_or_path ./models/train_dataset --do_eval --overwrite_output_dir --name new_case
 `train_dataset을 사용함!!`
 ```
 
