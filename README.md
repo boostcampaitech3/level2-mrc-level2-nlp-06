@@ -112,7 +112,7 @@ retrieval 과 mrc 모델의 학습이 완료되면 `inference.py` 를 이용해 
 ```bash
 # ODQA 실행 (test_dataset 사용)
 # wandb 가 로그인 되어있다면 자동으로 결과가 wandb 에 저장됩니다. 아니면 단순히 출력됩니다
-python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/test_dataset/ --model_name_or_path ./models/train_dataset/ --do_predict --overwrite_output_dir
+python inference.py --output_dir ./outputs/test_dataset/ --dataset_name ../data/test_dataset/ --model_name_or_path ./models/train_dataset/ --do_predict --overwrite_output_dir --name new_case
 ```
 
 ```bash
