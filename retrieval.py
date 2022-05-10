@@ -13,6 +13,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from tqdm.auto import tqdm
 
 from rank_bm25 import BM25Plus
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+import torch.nn.functional as F
+from transformers import (
+    AutoTokenizer,
+    BertModel, BertPreTrainedModel,
+    AdamW, get_linear_schedule_with_warmup,
+    TrainingArguments,
+)
 
 @contextmanager
 def timer(name):
@@ -567,7 +576,7 @@ class DenseRetrieval:
 
         self.prepare_in_batch_negative(num_neg=num_neg)
 
-    def prepare_in_batch_negative(self, dataset=None, num_neg=2, tokenizer=None):
+    def prepare_in_batch_negative(self, dataset=None, num_neg=16, tokenizer=None):
         if dataset is None:
             dataset = self.dataset
 
@@ -582,7 +591,7 @@ class DenseRetrieval:
         for c in dataset['context']:
             
             while True:
-                neg_idxs = np.random.randint(len(corpus), size=num_neg)
+                neg_idxs = np.random.randint(len(corpus), size=num_neg) # TODO : TF-IDF 스코어는 높지만 답을 포함하지 않는 샘플
 
                 if not c in corpus[neg_idxs]:
                     p_neg = corpus[neg_idxs]
@@ -646,8 +655,8 @@ class DenseRetrieval:
             with tqdm(self.train_dataloader, unit="batch") as tepoch:
                 for batch in tepoch:
 
-                    p_encoder.train()
-                    q_encoder.train()
+                    self.p_encoder.train()
+                    self.q_encoder.train()
             
                     targets = torch.zeros(batch_size).long() # positive example은 전부 첫 번째에 위치하므로
                     targets = targets.to(args.device)
