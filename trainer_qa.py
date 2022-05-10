@@ -107,6 +107,6 @@ class QuestionAnsweringTrainer(Trainer):
             )
 
         predictions = self.post_process_function(
-            test_examples, test_dataset, output.predictions, self.args
+            test_examples, test_dataset, output.predictions, self.args, 
         )
         return predictions
