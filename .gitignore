@@ -3,6 +3,7 @@ __pycache__/
 
 ## Jupyter notebook ##
 .ipynb_checkpoints
+*.ipynb
 
 ## etc
 assets
@@ -15,3 +16,7 @@ runs/
 
 ## wandb
 wandb/
+
+## dataset
+new_dataset/
+concat_dataset/
