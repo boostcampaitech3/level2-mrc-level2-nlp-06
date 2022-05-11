@@ -8,9 +8,11 @@ Open-Domain Question Answering 을 수행하는 inference 코드 입니다.
 import logging
 import sys
 from typing import Callable, Dict, List, NoReturn, Tuple
+from input.code.model import BertEncoder
+import torch
 
 import numpy as np
-from arguments import DataTrainingArguments, ModelArguments
+from arguments import DataTrainingArguments, ModelArguments, DPRArguments
 from datasets import (
     Dataset,
     DatasetDict,
@@ -20,7 +22,7 @@ from datasets import (
     load_from_disk,
     load_metric,
 )
-from retrieval import SparseRetrieval, SparseRetrieval_BM25
+from retrieval import DenseRetrieval, SparseRetrieval, SparseRetrieval_BM25
 from trainer_qa import QuestionAnsweringTrainer
 from transformers import (
     AutoConfig,
@@ -38,13 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    # 가능한 arguments 들은 ./arguments.py 나 transformer package 안의 src/transformers/training_args.py 에서 확인 가능합니다.
-    # --help flag 를 실행시켜서 확인할 수 도 있습니다.
-
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
     )
-    model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+    model_args, data_args, training_args, dpr_args = parser.parse_args_into_dataclasses()
 
     training_args.do_train = True
 
@@ -88,29 +87,63 @@ def main():
 
     # True일 경우 : run passage retrieval
     if data_args.eval_retrieval:
-        datasets = run_sparse_retrieval(
-            tokenizer.tokenize, datasets, training_args, data_args,
+        datasets = run_retrieval(
+            tokenizer.tokenize, datasets, training_args, data_args, dpr_args
         )
+
+    # True일 경우 : run passage retrieval
+    if data_args.eval_retrieval:
+        p_encoder = BertEncoder.from_pretrained('klue/bert-base').cuda()
+        q_encoder = BertEncoder.from_pretrained('klue/bert-base').cuda()
+        model_dict = torch.load('./dense_encoder/encoder.pth')
+        p_encoder.load_state_dict(model_dict['p_encoder]'])
+        q_encoder.load_state_dict(model_dict['q_encoder]'])
+        # datasets = run_dense_retrieval(
+        #     tokenizer.tokenize, datasets, training_args, data_args,
+        # )
 
     # eval or predict mrc model
     if training_args.do_eval or training_args.do_predict:
         run_mrc(data_args, training_args, model_args, datasets, tokenizer, model)
 
 
-def run_sparse_retrieval(
+def run_retrieval(
     tokenize_fn: Callable[[str], List[str]],
     datasets: DatasetDict,
     training_args: TrainingArguments,
     data_args: DataTrainingArguments,
     data_path: str = "../data",
     context_path: str = "wikipedia_documents.json",
+    dpr_args: DPRArguments = None,
 ) -> DatasetDict:
-
+    """
+        Args:
+            tokenize_fn (Callable[[str], List[str]]): 토크나이즈 함수, tokenizer가 아닌 tokenizer.tokenize를 인자로 받아야함.
+            datasets (DatasetDict): DatasetDict 타입의 데이터셋
+            training_args (TrainingArguments): 학습에 필요한 arguments
+            data_args (DataTrainingArguments): 데이터에 관련된 arguments
+            data_path (str, optional): 데이터셋의 경로. Defaults to "../data".
+            context_path (str, optional): retrieval을 실행할 파일. Defaults to "wikipedia_documents.json".
+            dpr_args: (DPRArguments): DPR 관련된 arguments. Defaults to 'None'
+            
+        Returns:
+            DatasetDict: retrieve 된 데이터셋을 리턴.
+    """ 
+    retriever = None
     # Query에 맞는 Passage들을 Retrieval 합니다.
-    retriever = SparseRetrieval_BM25(
-        tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
-    )
-    retriever.get_sparse_embedding()
+    if data_args.retrieval_type == "SPR":
+        retriever = SparseRetrieval(
+            tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
+        )
+        retriever.get_sparse_embedding()
+    elif data_args.retrieval_type == "BM25":
+        retriever = SparseRetrieval_BM25(
+            tokenize_fn=tokenize_fn, data_path=data_path, context_path=context_path
+        )
+    elif data_args.retriever_type == "DPR":
+        retriever = DenseRetrieval(dpr_args=dpr_args, data_path=data_path,context_path=context_path)
+    else:
+        raise "No Valid retriever type"
 
     # temp
     if data_args.use_faiss:

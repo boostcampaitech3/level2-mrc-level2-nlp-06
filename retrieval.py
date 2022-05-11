@@ -1,4 +1,5 @@
 import json
+from multiprocessing import context
 import os
 import pickle
 import time
@@ -22,6 +23,9 @@ from transformers import (
     AdamW, get_linear_schedule_with_warmup,
     TrainingArguments,
 )
+
+from datasets import Dataset
+from model import BertEncoder
 
 @contextmanager
 def timer(name):
@@ -440,6 +444,7 @@ class SparseRetrieval_BM25(SparseRetrieval):
         self.BM25 = None
         self.tokenizer = tokenize_fn
 
+        self.get_sparse_embedding()
 
     def get_sparse_embedding(self) -> NoReturn:
         """
@@ -565,18 +570,19 @@ class SparseRetrieval_BM25(SparseRetrieval):
 
 
 class DenseRetrieval:
-    def __init__(self, args, dataset, num_neg, tokenizer, p_encoder, q_encoder):
-        self.args = args
-        self.dataset = dataset
-        self.num_neg = num_neg
+    def __init__(self, args, data_path, context_path):
+        self.tokenizer = AutoTokenizer.from_pretrained(args.model_checkpoint, use_fase=True)
+        self.p_encoder = BertEncoder.from_pretrained(args.model_checkpoint).cuda()
+        self.q_encoder = BertEncoder.from_pretrained(args.model_checkpoint).cuda()
+        self.wiki_data_path = data_path
 
-        self.tokenizer = tokenizer
-        self.p_encoder = p_encoder
-        self.q_encoder = q_encoder
+        
 
-        self.prepare_in_batch_negative(num_neg=num_neg)
 
-    def prepare_in_batch_negative(self, dataset=None, num_neg=16, tokenizer=None):
+        # self.prepare_in_batch_negative(num_neg=num_neg)
+
+        
+    def prepare_in_batch_negative(self, dataset=None, num_neg=2, tokenizer=None):
         if dataset is None:
             dataset = self.dataset
 
@@ -591,7 +597,7 @@ class DenseRetrieval:
         for c in dataset['context']:
             
             while True:
-                neg_idxs = np.random.randint(len(corpus), size=num_neg) # TODO : TF-IDF 스코어는 높지만 답을 포함하지 않는 샘플
+                neg_idxs = np.random.randint(len(corpus), size=num_neg)
 
                 if not c in corpus[neg_idxs]:
                     p_neg = corpus[neg_idxs]
@@ -624,7 +630,6 @@ class DenseRetrieval:
 
 
     def train(self, args=None):
-
         if args is None:
             args = self.args
         batch_size = args.per_device_train_batch_size
@@ -654,7 +659,6 @@ class DenseRetrieval:
 
             with tqdm(self.train_dataloader, unit="batch") as tepoch:
                 for batch in tepoch:
-
                     self.p_encoder.train()
                     self.q_encoder.train()
             
@@ -702,7 +706,6 @@ class DenseRetrieval:
 
 
     def get_relevant_doc(self, query, k=1, args=None, p_encoder=None, q_encoder=None):
-
         if args is None:
             args = self.args
 
@@ -738,14 +741,13 @@ class DenseRetrieval:
         return rank[:k]
 
 
-
 if __name__ == "__main__":
 
     import argparse
 
     parser = argparse.ArgumentParser(description="")
     parser.add_argument(
-        "--dataset_name", metavar="./data/train_dataset", type=str, help=""
+        "--dataset_name", metavar="../data/train_dataset", type=str, help=""
     )
     parser.add_argument(
         "--model_name_or_path",
@@ -753,7 +755,7 @@ if __name__ == "__main__":
         type=str,
         help="",
     )
-    parser.add_argument("--data_path", metavar="./data", type=str, help="")
+    parser.add_argument("--data_path", metavar="../data", type=str, help="")
     parser.add_argument(
         "--context_path", metavar="wikipedia_documents", type=str, help=""
     )

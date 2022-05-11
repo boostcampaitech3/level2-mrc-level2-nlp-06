@@ -19,7 +19,11 @@ from transformers import (
 )
 from utils_qa import check_no_error, postprocess_qa_predictions
 
-from retrieval import SparseRetrieval, SparseRetrieval_BM25
+from retrieval import DenseRetrieval, SparseRetrieval, SparseRetrieval_BM25
+from model import BertEncoder
+import json
+import torch
+
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +99,43 @@ def main():
         type(model),
     )
 
+    # train & save dense embedding retriever if true
+    # if data_args.train_retrieval:
+    #     train_dataset = datasets['train']
+    #     p_encoder = BertEncoder.from_pretrained('klue/bert-base').to(args.device)
+    #     q_encoder = BertEncoder.from_pretrained('klue/bert-base').to(args.device)
+
+    #     args = TrainingArguments(
+    #         output_dir="dense_retireval",
+    #         evaluation_strategy="epoch",
+    #         learning_rate=3e-4,
+    #         per_device_train_batch_size=2,
+    #         per_device_eval_batch_size=2,
+    #         num_train_epochs=2,
+    #         weight_decay=0.01
+    #     )
+    #     retriever = DenseRetrieval(
+    #         args=args,
+    #         dataset=train_dataset,
+    #         num_neg=16,
+    #         tokenizer=tokenizer,
+    #         p_encoder=p_encoder,
+    #         q_encoder=q_encoder,
+    #     )
+    #     encoder = retriever.train()
+    #     torch.save(encoder.state_dict(), './dense_encoder/')
+
+        
+
     # train & save sparse embedding retriever if true
-    if data_args.train_retrieval:
-        retriever = SparseRetrieval_BM25(
-            tokenize_fn=tokenizer.tokenize,
-            data_path="../data",
-            context_path="wikipedia_documents.json"
-        )
-        retriever.get_sparse_embedding()
+    # if data_args.train_retrieval:
+    #     retriever = SparseRetrieval_BM25(
+    #         tokenize_fn=tokenizer.tokenize,
+    #         data_path="../data",
+    #         context_path="wikipedia_documents.json"
+    #     )
+    #     retriever.get_sparse_embedding()
+
 
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
@@ -150,7 +183,7 @@ def run_mrc(
             stride=data_args.doc_stride, # 
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=True, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
@@ -242,7 +275,7 @@ def run_mrc(
             stride=data_args.doc_stride,
             return_overflowing_tokens=True,
             return_offsets_mapping=True,
-            return_token_type_ids=False, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
+            return_token_type_ids=True, # roberta모델을 사용할 경우 False, bert를 사용할 경우 True로 표기해야합니다.
             padding="max_length" if data_args.pad_to_max_length else False,
         )
 
