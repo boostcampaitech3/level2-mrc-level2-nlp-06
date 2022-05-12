@@ -98,6 +98,13 @@ class DataTrainingArguments:
         }
 
     )
+    retrieval_type: str = field(
+        default='dense',
+        metadata={
+            "help": "Define retrieval type (sparse, dense, bm25)"
+        }
+
+    )
 
 
 @dataclass
@@ -112,6 +119,91 @@ class UserArguments:
     )
 
     name: str = field(
-        default="new_case",
+        default="klue/roberta-large_dense",
         metadata={"help": "WandB 상 표시될 실험 케이스의 이름입니다. 규칙에 따라 작성해 주세요."}
+    )
+
+@dataclass
+class DenseTrainingArguments:
+    """
+    Arguments for training dense retrieval
+    """
+    data_path: str = field(
+        default="./data/train_dataset",
+        metadata={
+            "help": "Train data path"
+        },
+    )
+    dense_base_model: str = field(
+        default="klue/roberta-small",
+        metadata={
+            "help": "Path to pretrained model or model identifier from huggingface.co/models"
+        },
+    )
+    dense_mode: str = field(
+        default="single", #double
+        metadata={
+            "help": "single: share weight between p_encoder, q_encoder / double: not share"
+        },
+    )
+    dense_passage_retrieval_name: str = field(
+        default="./models/best/p_encoder",
+        metadata={
+            "help": "Path to pretrained model"
+        },
+
+    )
+    dense_question_retrieval_name: str = field(
+        default="./models/best/q_encoder",
+        metadata={
+            "help": "Path to pretrained model"
+        },
+    )
+    dense_train_epoch: int = field(
+        default=10,
+        metadata={
+            "help": "Epochs"
+        },
+    )
+    dense_train_batch_size: int = field(
+        default=8,
+        metadata={
+            "help": "batch size for train DataLoader"
+        },
+    )
+    dense_train_learning_rate: float = field(
+        default=2e-5,
+        metadata={
+            "help": "learning_rate for training"
+        },
+    )
+    dense_context_max_length: int = field(
+        default=384,
+        metadata={
+            "help": "batch size for train DataLoader"
+        },
+    )
+    dense_question_max_length: int = field(
+        default=80,
+        metadata={
+            "help": "batch size for train DataLoader"
+        },
+    )
+    dense_train_output_dir: str = field(
+        default="./models/dense_train/",
+        metadata={
+            "help": "save directory"
+        },
+    )
+    use_wiki_data: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use wiki data or not."
+        },
+    )
+    wiki_data_path: str = field(
+        default="./opt/ml/data/",
+        metadata={
+            "help": "Wiki data path"
+        },
     )

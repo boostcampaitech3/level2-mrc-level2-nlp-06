@@ -1,9 +1,11 @@
 import json
+from multiprocessing import context
 import os
 import pickle
 import time
 from contextlib import contextmanager
 from typing import List, NoReturn, Optional, Tuple, Union
+import sys
 
 import faiss
 import numpy as np
@@ -11,6 +13,9 @@ import pandas as pd
 from datasets import Dataset, concatenate_datasets, load_from_disk
 from sklearn.feature_extraction.text import TfidfVectorizer
 from tqdm.auto import tqdm
+
+from .utils.dense_utils.retrieval_dataset import RetrievalValidDataset
+from .utils.logger import get_logger
 
 from rank_bm25 import BM25Plus
 import torch
@@ -23,13 +28,15 @@ from transformers import (
     TrainingArguments,
 )
 
+from utils.logger import get_logger
+
+logger = get_logger('logs/retrieval.log')
+
 @contextmanager
 def timer(name):
     t0 = time.time()
     yield
     print(f"[{name}] done in {time.time() - t0:.3f} s")
-
-
 
 class SparseRetrieval:
     def __init__(
@@ -487,6 +494,7 @@ class SparseRetrieval_BM25(SparseRetrieval):
         elif isinstance(query_or_dataset, Dataset):
             # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
             total = []
+            print('query_or_dataset : ', type(query_or_dataset), " ", query_or_dataset)
             with timer("query exhaustive search"):
                 doc_scores, doc_indices = self.get_relevant_doc_bulk(
                     query_or_dataset['question'], k=topk
@@ -543,7 +551,7 @@ class SparseRetrieval_BM25(SparseRetrieval):
     def get_relevant_doc_bulk(
         self, queries: List, k: Optional[int] = 1
     ) -> Tuple[List, List]:
-
+        
         tokenized_queries= [self.tokenizer(i) for i in queries]
         assert (
             np.sum(tokenized_queries) != 0
@@ -563,180 +571,172 @@ class SparseRetrieval_BM25(SparseRetrieval):
             doc_indices.append(sorted_indices[:k])
         return doc_scores, doc_indices
 
-
 class DenseRetrieval:
-    def __init__(self, args, dataset, num_neg, tokenizer, p_encoder, q_encoder):
-        self.args = args
-        self.dataset = dataset
-        self.num_neg = num_neg
+    def __init__(self, tokenizer, encoders, data_path="./data/", context_path="wikipedia_documents.json"):
+         # Path 설정 및 데이터 로드
+        self.data_path = data_path
+        logger.info(type(data_path),data_path)
+        logger.info(type(context_path),context_path)
+        with open(os.path.join(data_path, context_path), "r", encoding="utf-8") as f:
+            wiki = json.load(f)
 
+        # Context 정렬 및 index 할당
+        self.contexts = list(
+            dict.fromkeys([v["text"] for v in wiki.values()])
+        )  # set 은 매번 순서가 바뀌므로
+        logger.info(f"Lengths of unique contexts : {len(self.contexts)}")
+        self.ids = list(range(len(self.contexts)))
+
+        # Set tokenizer
         self.tokenizer = tokenizer
-        self.p_encoder = p_encoder
-        self.q_encoder = q_encoder
+        self.p_embedding = None
+        self.indexer = None
 
-        self.prepare_in_batch_negative(num_neg=num_neg)
+        self.p_tokenizer = tokenizer[0]
+        self.q_tokenizer = tokenizer[1]
+        self.p_encoder = encoders[0]
+        self.q_encoder = encoders[1]
+        self.passage_embedding_vectors = []
+        
+    def get_dense_passage_embedding(self) -> NoReturn:
 
-    def prepare_in_batch_negative(self, dataset=None, num_neg=16, tokenizer=None):
-        if dataset is None:
-            dataset = self.dataset
+        """
+        Summary:
+            Passage Embedding을 만들어 self에 저장 
+        """
+        logger.info('Tokenize passage')
+        item = self.p_tokenizer(self.contexts, max_length=500, padding="max_length", truncation=True, return_tensors='pt')
+        p_dataset = RetrievalValidDataset(input_ids=item['input_ids'], attention_mask=item['attention_mask'])
+        p_loader = DataLoader(p_dataset, batch_size=16)
 
-        if tokenizer is None:
-            tokenizer = self.tokenizer
+        logger.info('Make passage embedding vectors')
+        
+        for item in tqdm(p_loader):
+            cls = self.p_encoder(input_ids = item['input_ids'].to('cuda:0'), attention_mask=item['attention_mask'].to('cuda:0')).pooler_output
+            cls = cls.to('cpu').detach().numpy()
+            self.passage_embedding_vectors.extend(cls)
+            torch.cuda.empty_cache()
+            del item
+        self.passage_embedding_vectors = torch.Tensor(self.passage_embedding_vectors).squeeze()
+        logger.info('passage embedding vectors: ', self.passage_embedding_vectors.size())
 
-        # 1. In-Batch-Negative 만들기
-        # CORPUS를 np.array로 변환해줍니다.        
-        corpus = np.array(list(set([example for example in dataset['context']])))
-        p_with_neg = []
+    def retrieve(
+        self, q_encoder, query_or_dataset: Union[str, Dataset], topk: Optional[int] = 1
+    ) -> Union[Tuple[List, List], pd.DataFrame]:
 
-        for c in dataset['context']:
-            
-            while True:
-                neg_idxs = np.random.randint(len(corpus), size=num_neg) # TODO : TF-IDF 스코어는 높지만 답을 포함하지 않는 샘플
+        """
+        Arguments:
+            query_or_dataset (Union[str, Dataset]):
+                str이나 Dataset으로 이루어진 Query를 받습니다.
+                str 형태인 하나의 query만 받으면 `get_relevant_doc`을 통해 유사도를 구합니다.
+                Dataset 형태는 query를 포함한 HF.Dataset을 받습니다.
+                이 경우 `get_relevant_doc_bulk`를 통해 유사도를 구합니다.
+            topk (Optional[int], optional): Defaults to 1.
+                상위 몇 개의 passage를 사용할 것인지 지정합니다.
+        Returns:
+            1개의 Query를 받는 경우  -> Tuple(List, List)
+            다수의 Query를 받는 경우 -> pd.DataFrame: [description]
+        Note:
+            다수의 Query를 받는 경우,
+                Ground Truth가 있는 Query (train/valid) -> 기존 Ground Truth Passage를 같이 반환합니다.
+                Ground Truth가 없는 Query (test) -> Retrieval한 Passage만 반환합니다.
+        """
+        assert self.passage_embedding_vectors is not None, "get_dense_passage_embedding() 메소드를 먼저 수행해줘야합니다."
+        
+    
+        if isinstance(query_or_dataset, str):
+            doc_scores, doc_indices = self.get_relevant_doc(q_encoder, query_or_dataset, k=topk)
+            logger.info("[Search query]\n", query_or_dataset, "\n")
 
-                if not c in corpus[neg_idxs]:
-                    p_neg = corpus[neg_idxs]
+            for i in range(topk):
+                logger.info(f"Top-{i+1} passage with score {doc_scores[i]:4f}")
+                logger.info(self.contexts[doc_indices[i]])
 
-                    p_with_neg.append(c)
-                    p_with_neg.extend(p_neg)
-                    break
+            return (doc_scores, [self.contexts[doc_indices[i]] for i in range(topk)])
 
-        # 2. (Question, Passage) 데이터셋 만들어주기
-        q_seqs = tokenizer(dataset['question'], padding="max_length", truncation=True, return_tensors='pt')
-        p_seqs = tokenizer(p_with_neg, padding="max_length", truncation=True, return_tensors='pt')
+        elif isinstance(query_or_dataset, Dataset):
 
-        max_len = p_seqs['input_ids'].size(-1)
-        p_seqs['input_ids'] = p_seqs['input_ids'].view(-1, num_neg+1, max_len)
-        p_seqs['attention_mask'] = p_seqs['attention_mask'].view(-1, num_neg+1, max_len)
-        p_seqs['token_type_ids'] = p_seqs['token_type_ids'].view(-1, num_neg+1, max_len)
-
-        train_dataset = TensorDataset(
-            p_seqs['input_ids'], p_seqs['attention_mask'], p_seqs['token_type_ids'], 
-            q_seqs['input_ids'], q_seqs['attention_mask'], q_seqs['token_type_ids']
-        )
-
-        self.train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=self.args.per_device_train_batch_size)
-
-        valid_seqs = tokenizer(dataset['context'], padding="max_length", truncation=True, return_tensors='pt')
-        passage_dataset = TensorDataset(
-            valid_seqs['input_ids'], valid_seqs['attention_mask'], valid_seqs['token_type_ids']
-        )
-        self.passage_dataloader = DataLoader(passage_dataset, batch_size=self.args.per_device_train_batch_size)
-
-
-    def train(self, args=None):
-
-        if args is None:
-            args = self.args
-        batch_size = args.per_device_train_batch_size
-
-        # Optimizer
-        no_decay = ['bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in self.p_encoder.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
-            {'params': [p for n, p in self.p_encoder.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
-            {'params': [p for n, p in self.q_encoder.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
-            {'params': [p for n, p in self.q_encoder.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-        t_total = len(self.train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total)
-
-        # Start training!
-        global_step = 0
-
-        self.p_encoder.zero_grad()
-        self.q_encoder.zero_grad()
-        torch.cuda.empty_cache()
-
-        train_iterator = tqdm(range(int(args.num_train_epochs)), desc="Epoch")
-        # for _ in range(int(args.num_train_epochs)):
-        for _ in train_iterator:
-
-            with tqdm(self.train_dataloader, unit="batch") as tepoch:
-                for batch in tepoch:
-
-                    self.p_encoder.train()
-                    self.q_encoder.train()
-            
-                    targets = torch.zeros(batch_size).long() # positive example은 전부 첫 번째에 위치하므로
-                    targets = targets.to(args.device)
-
-                    p_inputs = {
-                        'input_ids': batch[0].view(batch_size * (self.num_neg + 1), -1).to(args.device),
-                        'attention_mask': batch[1].view(batch_size * (self.num_neg + 1), -1).to(args.device),
-                        'token_type_ids': batch[2].view(batch_size * (self.num_neg + 1), -1).to(args.device)
-                    }
-            
-                    q_inputs = {
-                        'input_ids': batch[3].to(args.device),
-                        'attention_mask': batch[4].to(args.device),
-                        'token_type_ids': batch[5].to(args.device)
-                    }
-            
-                    p_outputs = self.p_encoder(**p_inputs)  # (batch_size*(num_neg+1), emb_dim)
-                    q_outputs = self.q_encoder(**q_inputs)  # (batch_size*, emb_dim)
-
-                    # Calculate similarity score & loss
-                    p_outputs = p_outputs.view(batch_size, self.num_neg + 1, -1)
-                    q_outputs = q_outputs.view(batch_size, 1, -1)
-
-                    sim_scores = torch.bmm(q_outputs, torch.transpose(p_outputs, 1, 2)).squeeze()  #(batch_size, num_neg + 1)
-                    sim_scores = sim_scores.view(batch_size, -1)
-                    sim_scores = F.log_softmax(sim_scores, dim=1)
-
-                    loss = F.nll_loss(sim_scores, targets)
-                    tepoch.set_postfix(loss=f'{str(loss.item())}')
-
-                    loss.backward()
-                    optimizer.step()
-                    scheduler.step()
-
-                    self.p_encoder.zero_grad()
-                    self.q_encoder.zero_grad()
-
-                    global_step += 1
-
-                    torch.cuda.empty_cache()
-
-                    del p_inputs, q_inputs
-
-
-    def get_relevant_doc(self, query, k=1, args=None, p_encoder=None, q_encoder=None):
-
-        if args is None:
-            args = self.args
-
-        if p_encoder is None:
-            p_encoder = self.p_encoder
-
-        if q_encoder is None:
-            q_encoder = self.q_encoder
-
-        with torch.no_grad():
-            p_encoder.eval()
-            q_encoder.eval()
-
-            q_seqs_val = self.tokenizer([query], padding="max_length", truncation=True, return_tensors='pt').to(args.device)
-            q_emb = q_encoder(**q_seqs_val).to('cpu')  # (num_query=1, emb_dim)
-
-            p_embs = []
-            for batch in self.passage_dataloader:
-
-                batch = tuple(t.to(args.device) for t in batch)
-                p_inputs = {
-                    'input_ids': batch[0],
-                    'attention_mask': batch[1],
-                    'token_type_ids': batch[2]
+            # Retrieve한 Passage를 pd.DataFrame으로 반환합니다.
+            total = []
+            with timer("query exhaustive search"):
+                doc_scores, doc_indices = self.get_relevant_doc_bulk(q_encoder, 
+                    query_or_dataset["question"], k=topk
+                )
+            for idx, example in enumerate(
+                tqdm(query_or_dataset, desc="Dense retrieval: ")
+            ):
+                tmp = {
+                    # Query와 해당 id를 반환합니다.
+                    "question": example["question"],
+                    "id": example["id"],
+                    # Retrieve한 Passage의 id, context를 반환합니다.
+                    "context_id": doc_indices[idx],
+                    "context": " ".join(
+                        [self.contexts[pid] for pid in doc_indices[idx]]
+                    ),
                 }
-                p_emb = p_encoder(**p_inputs).to('cpu')
-                p_embs.append(p_emb)
+                if "context" in example.keys() and "answers" in example.keys():
+                    # validation 데이터를 사용하면 ground_truth context와 answer도 반환합니다.
+                    tmp["original_context"] = example["context"]
+                    tmp["answers"] = example["answers"]
+                total.append(tmp)
 
-        p_embs = torch.stack(p_embs, dim=0).view(len(self.passage_dataloader.dataset), -1)  # (num_passage, emb_dim)
+            cqas = pd.DataFrame(total)
+            return cqas
 
-        dot_prod_scores = torch.matmul(q_emb, torch.transpose(p_embs, 0, 1))
-        rank = torch.argsort(dot_prod_scores, dim=1, descending=True).squeeze()
-        return rank[:k]
+    def get_relevant_doc(self, q_encoder, query: str, k: Optional[int] = 1) -> Tuple[List, List]:
 
+        """
+        Arguments:
+            query (str):
+                하나의 Query를 받습니다.
+            k (Optional[int]): 1
+                상위 몇 개의 Passage를 반환할지 정합니다.
+        Note:
+            vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
+        """
+        q_seqs_val = self.q_tokenizer([query], max_length=80, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+
+        logger.info('Make top-k passage per query')
+        q_emb = q_encoder(**q_seqs_val).pooler_output.detach().cpu()  #(num_query, emb_dim)
+        dot_prod_scores = torch.matmul(q_emb, torch.transpose(self.passage_embedding_vectors, 0, 1))
+
+        rank = torch.argsort(dot_prod_scores, descending=True)
+       
+        doc_score = dot_prod_scores[rank[:k]]
+        doc_indices = rank[:k]
+
+        return doc_score, doc_indices
+
+    def get_relevant_doc_bulk(
+        self, q_encoder, queries: List, k: Optional[int] = 1
+    ) -> Tuple[List, List]:
+
+        """
+        Arguments:
+            queries (List):
+                하나의 Query를 받습니다.
+            k (Optional[int]): 1
+                상위 몇 개의 Passage를 반환할지 정합니다.
+        Note:
+            vocab 에 없는 이상한 단어로 query 하는 경우 assertion 발생 (예) 뙣뙇?
+        """
+        logger.info('Get passage per each question')
+        q_seqs_val = self.q_tokenizer(queries, max_length=80, padding="max_length", truncation=True, return_tensors='pt').to('cuda')
+        q_dataset = RetrievalValidDataset(input_ids=q_seqs_val['input_ids'], attention_mask=q_seqs_val['attention_mask'])
+        q_loader = DataLoader(q_dataset, batch_size=1)
+        
+        doc_scores = []
+        doc_indices = []
+        for item in tqdm(q_loader):
+            q_embs = q_encoder(input_ids = item['input_ids'].to('cuda:0'), attention_mask=item['attention_mask'].to('cuda:0')).pooler_output.to('cpu')  #(num_query, emb_dim)
+            for q_emb in q_embs:
+                dot_prod_scores = torch.matmul(q_emb, torch.transpose(self.passage_embedding_vectors, 0, 1))
+                rank = torch.argsort(dot_prod_scores, dim=0, descending=True).squeeze()
+            
+                doc_scores.append(dot_prod_scores[rank[:k]].detach().cpu().numpy())
+                doc_indices.append(rank[:k].detach().cpu().numpy())
+        return doc_scores, doc_indices
 
 
 if __name__ == "__main__":

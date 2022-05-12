@@ -19,8 +19,6 @@ from transformers import (
 )
 from utils_qa import check_no_error, postprocess_qa_predictions
 
-from retrieval import SparseRetrieval, SparseRetrieval_BM25
-
 logger = logging.getLogger(__name__)
 
 
@@ -94,15 +92,6 @@ def main():
         type(tokenizer),
         type(model),
     )
-
-    # train & save sparse embedding retriever if true
-    if data_args.train_retrieval:
-        retriever = SparseRetrieval_BM25(
-            tokenize_fn=tokenizer.tokenize,
-            data_path="../data",
-            context_path="wikipedia_documents.json"
-        )
-        retriever.get_sparse_embedding()
 
     # do_train mrc model 혹은 do_eval mrc model
     if training_args.do_train or training_args.do_eval:
