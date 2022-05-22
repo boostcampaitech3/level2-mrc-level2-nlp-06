@@ -59,6 +59,18 @@
 
 <br/>
 
+Public Score - EM : 59.1700, F1 : 69.0300 
+
+
+
+![화면 캡처 2022-05-23 020842](https://user-images.githubusercontent.com/86389775/169707173-16d2c3dc-bf6f-4115-9f5d-034c55195d33.png)
+
+
+Private Score - EM : 56.6700, F1 : 68.2300 
+
+
+![화면 캡처 2022-05-23 020913](https://user-images.githubusercontent.com/86389775/169707195-ad29125d-d939-4d45-ad50-295bb44e86ac.png)
+
 
 
 ## 코드 설명
