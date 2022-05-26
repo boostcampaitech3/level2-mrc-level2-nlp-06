@@ -104,7 +104,7 @@ inference.py		     # ODQA 모델 평가 또는 제출 파일 (predictions.json) 
 
 아래는 제공하는 데이터셋의 분포를 보여줍니다.
 
-![데이터 분포](./assets/dataset.png)
+![KakaoTalk_20220526_163504621](https://user-images.githubusercontent.com/86389775/170440940-16401b87-e0c6-4005-9bfd-d09b4551afe9.png)
 
 데이터셋은 편의성을 위해 Huggingface 에서 제공하는 datasets를 이용하여 pyarrow 형식의 데이터로 저장되어있습니다. 다음은 데이터셋의 구성입니다.
 
